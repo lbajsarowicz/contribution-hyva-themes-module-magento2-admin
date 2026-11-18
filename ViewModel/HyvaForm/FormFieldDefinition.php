@@ -2,6 +2,9 @@
 
 namespace Hyva\Admin\ViewModel\HyvaForm;
 
+use Magento\Framework\View\Element\Template;
+use Magento\Framework\View\LayoutInterface;
+
 use function array_merge as merge;
 
 class FormFieldDefinition implements FormFieldDefinitionInterface
@@ -51,8 +54,19 @@ class FormFieldDefinition implements FormFieldDefinitionInterface
      */
     private $formFieldDefinitionFactory;
 
+    /**
+     * @var LayoutInterface
+     */
+    private $layout;
+
+    /**
+     * @var string
+     */
+    private $formName;
+
     public function __construct(
         FormFieldDefinitionInterfaceFactory $formFieldDefinitionFactory,
+        LayoutInterface $layout,
         string $name,
         ?array $options = [],
         ?string $inputType = null,
@@ -60,7 +74,8 @@ class FormFieldDefinition implements FormFieldDefinitionInterface
         ?string $template = null,
         ?bool $isEnabled = null,
         ?bool $isExcluded = null,
-        ?string $valueProcessor = null
+        ?string $valueProcessor = null,
+        string $formName = ''
     ) {
         $this->formFieldDefinitionFactory = $formFieldDefinitionFactory;
         $this->name                       = $name;
@@ -71,12 +86,15 @@ class FormFieldDefinition implements FormFieldDefinitionInterface
         $this->enabled                    = $isEnabled;
         $this->excluded                   = $isExcluded;
         $this->valueProcessor             = $valueProcessor;
+        $this->layout                     = $layout;
+        $this->formName                   = $formName;
     }
 
     public function toArray(): array
     {
         return [
             'name'           => $this->name,
+            'formName'       => $this->formName,
             'options'        => $this->options,
             'inputType'      => $this->inputType,
             'groupId'        => $this->groupId,
@@ -99,22 +117,38 @@ class FormFieldDefinition implements FormFieldDefinitionInterface
 
     public function getHtml(): string
     {
+        /** @var Template $block */
+        $block = $this->layout->createBlock(Template::class, '', [
+            'data' => ['template' => $this->template ?? 'Hyva_Admin::form/field/' . $this->getInputType() . '.phtml'],
+        ]);
+        $block->assign('field', $this);
 
+        return $block->toHtml();
+    }
+
+    public function getLabel(): string
+    {
+        return ucfirst(str_replace('_', ' ', $this->name));
+    }
+
+    public function getFormName(): string
+    {
+        return $this->formName;
     }
 
     public function getOptions(): array
     {
-        return $this->options;
+        return $this->options ?? [];
     }
 
     public function getGroupId(): string
     {
-        return $this->groupId;
+        return $this->groupId ?? 'default';
     }
 
     public function getInputType(): string
     {
-        return $this->inputType;
+        return $this->inputType ?? 'text';
     }
 
     public function isEnabled(): bool

@@ -6,13 +6,8 @@ use Hyva\Admin\Model\FormEntity\FormLoadEntity;
 use Hyva\Admin\Model\HyvaFormDefinitionInterface;
 use Hyva\Admin\ViewModel\HyvaForm\FormFieldDefinitionInterface as FieldDefinition;
 use Hyva\Admin\ViewModel\HyvaForm\FormFieldDefinitionInterfaceFactory;
-
-use function array_column as pick;
-use function array_filter as filter;
-use function array_keys as keys;
-use function array_map as map;
-use function array_merge as merge;
-use function array_values as values;
+use Hyva\Admin\ViewModel\HyvaForm\FormGroupInterfaceFactory;
+use Hyva\Admin\ViewModel\HyvaForm\FormSectionInterfaceFactory;
 
 class FormStructureBuilder
 {
@@ -21,36 +16,76 @@ class FormStructureBuilder
      */
     private $formFieldDefinitionFactory;
 
-    public function __construct(FormFieldDefinitionInterfaceFactory $formFieldDefinitionFactory)
-    {
+    /**
+     * @var FormGroupInterfaceFactory
+     */
+    private $formGroupFactory;
+
+    /**
+     * @var FormSectionInterfaceFactory
+     */
+    private $formSectionFactory;
+
+    public function __construct(
+        FormFieldDefinitionInterfaceFactory $formFieldDefinitionFactory,
+        FormGroupInterfaceFactory $formGroupFactory,
+        FormSectionInterfaceFactory $formSectionFactory
+    ) {
         $this->formFieldDefinitionFactory = $formFieldDefinitionFactory;
+        $this->formGroupFactory = $formGroupFactory;
+        $this->formSectionFactory = $formSectionFactory;
     }
 
     public function buildStructure(
         HyvaFormDefinitionInterface $formDefinition,
         FormLoadEntity $formEntity
     ): FormStructure {
-        // This is the outline for algorithm to build the form structure of sections, groups and fields.
-        // It is likely this might be moved to a different location once it's done.
-        $fieldsFromEntity = $formEntity->getFieldDefinitions();
-        $fieldsFromConfig = $formDefinition->getFieldDefinitions();
+        $fields = $this->mergeFieldDefinitions($formEntity->getFieldDefinitions(), $formDefinition->getFieldDefinitions());
+        $fieldsByGroup = [];
+        foreach ($fields as $field) {
+            $field = $this->formFieldDefinitionFactory->create(array_merge($field->toArray(), [
+                'formName' => $formDefinition->getFormName(),
+            ]));
+            $fieldsByGroup[$field->getGroupId()][] = $field;
+        }
 
-        $fields = $this->mergeFieldDefinitions($fieldsFromEntity, $fieldsFromConfig);
+        $sections = [];
+        foreach ($this->sortConfig($formDefinition->getSectionsConfig()) as $sectionConfig) {
+            $groups = [];
+            foreach ($this->sortConfig($sectionConfig['groups'] ?? []) as $groupConfig) {
+                $groupId = $groupConfig['id'];
+                $groups[] = $this->formGroupFactory->create([
+                    'id' => $groupId,
+                    'label' => $groupConfig['label'] ?? null,
+                    'fields' => $fieldsByGroup[$groupId] ?? [],
+                ]);
+                unset($fieldsByGroup[$groupId]);
+            }
+            $sections[] = $this->formSectionFactory->create([
+                'formName' => $formDefinition->getFormName(),
+                'id' => $sectionConfig['id'],
+                'label' => $sectionConfig['label'] ?? null,
+                'groups' => $groups,
+            ]);
+        }
 
-        $groupIdsFromFields   = map(function (FieldDefinition $f): ?string {
-            return $f->getGroupId();
-        }, $fields);
-        $groupIdsFromSections = $this->getGroupIdsFromSections($formDefinition->getSectionsConfig());
+        if ($fieldsByGroup) {
+            $groups = [];
+            foreach ($fieldsByGroup as $groupId => $groupFields) {
+                $groups[] = $this->formGroupFactory->create([
+                    'id' => (string) $groupId,
+                    'fields' => $groupFields,
+                ]);
+            }
+            $sections[] = $this->formSectionFactory->create([
+                'formName' => $formDefinition->getFormName(),
+                'id' => 'default',
+                'label' => null,
+                'groups' => $groups,
+            ]);
+        }
 
-        $fieldToGroupMap  = $this->buildFieldToGroupMap($fields);
-        $groupToFieldsMap = $this->buildGroupToFieldsMap($fieldToGroupMap);
-
-        $sectionsFromConfig = $this->getSectionsFromConfig($formDefinition->getSectionsConfig());
-
-        $groupToSectionMap = $this->buildGroupToSectionMap($sectionsFromConfig, $groupToFieldsMap);
-
-        $sectionToGroupsMap = $this->buildSectionToGroupsMap($groupToSectionMap);
-
+        return new FormStructure($formDefinition->getFormName(), $sections);
     }
 
     /**
@@ -60,35 +95,22 @@ class FormStructureBuilder
      */
     private function mergeFieldDefinitions(array $fieldsFromEntity, array $fieldsFromConfig): array
     {
-        $fieldsOnlyInEntity = array_diff_key($fieldsFromEntity, $fieldsFromConfig);
-        $fieldsOnlyInConfig = array_diff_key($fieldsFromConfig, $fieldsFromEntity);
-        $fieldsInBoth       = array_intersect(keys($fieldsFromEntity), keys($fieldsFromConfig));
-
-        return merge(
-            $fieldsOnlyInConfig,
-            map(
-                [$this, 'mergeFieldDefinition'],
-                filter($fieldsOnlyInEntity, function (FieldDefinition $f) use ($fieldsInBoth) {
-                    return in_array($f->getName(), $fieldsInBoth);
-                }),
-                filter($fieldsOnlyInConfig, function (FieldDefinition $f) use ($fieldsInBoth) {
-                    return in_array($f->getName(), $fieldsInBoth);
-                })
-            ),
-            $fieldsOnlyInEntity
-        );
+        $fields = $fieldsFromConfig;
+        foreach ($fieldsFromEntity as $name => $field) {
+            $fields[$name] = isset($fieldsFromConfig[$name]) ? $field->merge($fieldsFromConfig[$name]) : $field;
+        }
+        return $fields;
     }
 
-    private function mergeFieldDefinition(FieldDefinition $entityField, FieldDefinition $configField): FieldDefinition
+    private function sortConfig(array $config): array
     {
-        return $entityField->merge($configField);
+        $config = array_values($config);
+        $positions = array_keys($config);
+        usort($positions, function (int $a, int $b) use ($config): int {
+            return ((int) ($config[$a]['sortOrder'] ?? 0) <=> (int) ($config[$b]['sortOrder'] ?? 0)) ?: $a <=> $b;
+        });
+        return array_map(function (int $position) use ($config): array {
+            return $config[$position];
+        }, $positions);
     }
-
-    private function getGroupIdsFromSections(array $sectionsConfig): array
-    {
-        return merge([], ...values(map(function (array $section): array {
-            return pick($section['groups'] ?? [], 'id');
-        }, $sectionsConfig)));
-    }
-
 }

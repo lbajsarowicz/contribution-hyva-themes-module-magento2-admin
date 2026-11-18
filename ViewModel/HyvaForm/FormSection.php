@@ -2,6 +2,9 @@
 
 namespace Hyva\Admin\ViewModel\HyvaForm;
 
+use Magento\Framework\View\Element\Template;
+use Magento\Framework\View\LayoutInterface;
+
 class FormSection implements FormSectionInterface
 {
     /**
@@ -19,16 +22,33 @@ class FormSection implements FormSectionInterface
      */
     private $label;
 
-    public function __construct(string $formName, array $groups, ?string $label)
-    {
+    /**
+     * @var LayoutInterface
+     */
+    private $layout;
+
+    /**
+     * @var string
+     */
+    private $id;
+
+    public function __construct(
+        string $formName,
+        array $groups,
+        ?string $label,
+        LayoutInterface $layout,
+        string $id = 'default'
+    ) {
         $this->formName = $formName;
         $this->groups = $groups;
         $this->label = $label;
+        $this->layout = $layout;
+        $this->id = $id;
     }
 
     public function getId(): string
     {
-
+        return $this->formName . '_' . $this->id;
     }
 
     public function getGroups(): array
@@ -38,7 +58,13 @@ class FormSection implements FormSectionInterface
 
     public function getHtml(): string
     {
+        /** @var Template $block */
+        $block = $this->layout->createBlock(Template::class, '', [
+            'data' => ['template' => 'Hyva_Admin::form/section.phtml'],
+        ]);
+        $block->assign('section', $this);
 
+        return $block->toHtml();
     }
 
     public function getLabel(): ?string
